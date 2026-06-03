@@ -7,7 +7,7 @@ url = "http://127.0.0.1:8080/v1/chat/completions"
 payload = {
     "model": "gemini-2.5-flash",
     "messages": [
-        {"role": "user", "content": "Hello! Respond with the word 'SUCCESSFUL' if you can read this."}
+        {"role": "user", "content": "Deploying code configuration setup with master key: sk-proj-1234567890abcdef1234567890abcdef12345678"}
     ]
 }
 
