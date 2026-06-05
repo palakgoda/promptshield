@@ -6,12 +6,14 @@ from src.config import settings
 # Import our active security shields
 from plugins.regex_pii_masker import PIMaskerPlugin
 from plugins.credential_leak_detector import CredentialLeakDetectorPlugin
+from plugins.rate_limiter import RateLimiterPlugin
 
 app = FastAPI(title="PromptShield Core Engine", version="1.0.0")
 async_client = httpx.AsyncClient()
 
 # Initialize and cache our security plugin instances
 security_pipeline = [
+    RateLimiterPlugin(max_requests=5, window_seconds=60), # Protects budget first
     PIMaskerPlugin(),
     CredentialLeakDetectorPlugin()
 ]
