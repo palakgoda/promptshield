@@ -173,19 +173,19 @@
         <div class="metrics-grid">
             <div class="metric-card total">
                 <h3>Total Analyzed Prompts</h3>
-                <div class="metric-value">1,248</div>
+                <div class="metric-value" id="total-prompts-val">0</div>
             </div>
             <div class="metric-card blocked">
                 <h3>Malicious Leaks Blocked</h3>
-                <div class="metric-value">42</div>
+                <div class="metric-value" id="blocked-leaks-val">0</div>
             </div>
             <div class="metric-card sanitized">
                 <h3>PII Entities Sanitized</h3>
-                <div class="metric-value">189</div>
+                <div class="metric-value" id="sanitized-val">0</div>
             </div>
             <div class="metric-card latency">
                 <h3>Average Overhead Latency</h3>
-                <div class="metric-value">4.2ms</div>
+                <div class="metric-value" id="latency-val">0.0ms</div>
             </div>
         </div>
 
@@ -201,34 +201,11 @@
                         <th>Mitigation Message / Metadata</th>
                     </tr>
                 </thead>
-                <tbody>
+                <tbody id="logs-tbody">
                     <tr>
-                        <td>2026-06-05 16:02:11</td>
-                        <td>/v1/chat/completions</td>
-                        <td><span class="badge blocked">403 Forbidden</span></td>
-                        <td>Credential Leak Detector</td>
-                        <td>Dropped: Raw OpenAI 'sk-proj' structural token detected.</td>
-                    </tr>
-                    <tr>
-                        <td>2026-06-05 15:58:45</td>
-                        <td>/v1/chat/completions</td>
-                        <td><span class="badge sanitized">200 OK</span></td>
-                        <td>Regex PII Masker</td>
-                        <td>Passed: 1 Credit Card Number, 1 Email string redacted.</td>
-                    </tr>
-                    <tr>
-                        <td>2026-06-05 15:55:02</td>
-                        <td>/v1/chat/completions</td>
-                        <td><span class="badge blocked">429 RateLimit</span></td>
-                        <td>Local Rate Limiter</td>
-                        <td>Dropped: Client burst exceeded maximum threshold window metrics.</td>
-                    </tr>
-                    <tr>
-                        <td>2026-06-05 15:42:19</td>
-                        <td>/v1/chat/completions</td>
-                        <td><span class="badge passed">200 OK</span></td>
-                        <td>Clean Forward Pass</td>
-                        <td>Forwarded: Safe structural context parameters matched.</td>
+                        <td colspan="5" style="text-align: center; color: var(--text-muted);">
+                            Loading live mitigation feed...
+                        </td>
                     </tr>
                 </tbody>
             </table>
@@ -238,5 +215,71 @@
             PromptShield Engine • Open Source Hackathon 2026 • Powered by FastAPI & VeritasCore
         </div>
     </div>
+
+    <script>
+        async function fetchDashboardData() {
+            try {
+                // Fetch metrics
+                const metricsRes = await fetch('/api/metrics');
+                if (metricsRes.ok) {
+                    const metrics = await metricsRes.json();
+                    document.getElementById('total-prompts-val').textContent = metrics.total_prompts.toLocaleString();
+                    document.getElementById('blocked-leaks-val').textContent = metrics.blocked_leaks.toLocaleString();
+                    document.getElementById('sanitized-val').textContent = metrics.sanitized_entities.toLocaleString();
+                    document.getElementById('latency-val').textContent = metrics.overhead_latency.toFixed(1) + 'ms';
+                }
+
+                // Fetch logs
+                const logsRes = await fetch('/api/logs?limit=50');
+                if (logsRes.ok) {
+                    const logs = await logsRes.json();
+                    const tbody = document.getElementById('logs-tbody');
+                    tbody.innerHTML = ''; // Clear previous
+
+                    if (logs.length === 0) {
+                        tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 20px;">No records found in database. Route traffic to starting monitoring!</td></tr>`;
+                    } else {
+                        logs.forEach(log => {
+                            const tr = document.createElement('tr');
+                            
+                            // Determine status badge class
+                            let badgeClass = 'passed';
+                            if (log.status_code === 403 || log.status_code === 429) {
+                                badgeClass = 'blocked';
+                            } else if (log.plugin_triggered === 'Regex PII Masker') {
+                                badgeClass = 'sanitized';
+                            } else if (log.status_code >= 400) {
+                                badgeClass = 'blocked';
+                            }
+
+                            // Format status code text
+                            let statusText = `${log.status_code} OK`;
+                            if (log.status_code === 403) statusText = '403 Forbidden';
+                            else if (log.status_code === 429) statusText = '429 RateLimit';
+                            else if (log.status_code === 500) statusText = '500 Error';
+                            else if (log.status_code === 502) statusText = '502 Bad Gateway';
+
+                            tr.innerHTML = `
+                                <td>${log.timestamp}</td>
+                                <td>${log.endpoint}</td>
+                                <td><span class="badge ${badgeClass}">${statusText}</span></td>
+                                <td>${log.plugin_triggered || 'Clean Forward Pass'}</td>
+                                <td>${log.message || ''}</td>
+                            `;
+                            tbody.appendChild(tr);
+                        });
+                    }
+                }
+            } catch (error) {
+                console.error('Error polling dashboard stats:', error);
+            }
+        }
+
+        // Initialize and poll every 2 seconds
+        window.addEventListener('DOMContentLoaded', () => {
+            fetchDashboardData();
+            setInterval(fetchDashboardData, 2000);
+        });
+    </script>
 </body>
 </html>
