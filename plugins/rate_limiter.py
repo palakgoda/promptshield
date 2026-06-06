@@ -6,21 +6,28 @@ class RateLimiterPlugin(BasePlugin):
         super().__init__(name="Local Rate Limiter")
         self.max_requests = max_requests
         self.window_seconds = window_seconds
-        # In-memory database tracking timestamps for each token/client
-        # Storing a simple list of request execution timestamps
-        self.request_history = []
+        # In-memory dictionary tracking timestamps per client IP/token
+        self.request_history = {}
 
-    def inspect(self, prompt_text: str) -> dict:
+    def inspect(self, prompt_text: str, context: dict = None) -> dict:
+        client_id = "global"
+        if context and "client_ip" in context:
+            client_id = context["client_ip"]
+
         current_time = time.time()
         
+        # Get history for this client, default to empty list
+        history = self.request_history.get(client_id, [])
+        
         # Clear out timestamps that are older than our evaluation window
-        self.request_history = [
-            t for t in self.request_history 
+        history = [
+            t for t in history 
             if current_time - t < self.window_seconds
         ]
+        self.request_history[client_id] = history
         
         # Check if the remaining active count exceeds our maximum safety boundary
-        if len(self.request_history) >= self.max_requests:
+        if len(history) >= self.max_requests:
             return {
                 "safe": False,
                 "prompt": prompt_text,
@@ -28,7 +35,7 @@ class RateLimiterPlugin(BasePlugin):
             }
             
         # Log the current valid transaction execution timestamp
-        self.request_history.append(current_time)
+        history.append(current_time)
         return {
             "safe": True,
             "prompt": prompt_text,

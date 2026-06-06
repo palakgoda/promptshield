@@ -31,11 +31,15 @@ class YourCustomPlugin(BasePlugin):
         # The name parameter is displayed on the dashboard when triggered
         super().__init__(name="Your Custom Plugin Name")
 
-    def inspect(self, prompt_text: str) -> dict:
+    def inspect(self, prompt_text: str, context: dict = None) -> dict:
         """
         Processes incoming prompts.
         - If unsafe, return safe=False and a descriptive block reason.
         - If safe, return safe=True and the original or mutated (redacted) prompt.
+        
+        The optional 'context' dict contains request metadata like:
+        - context["client_ip"]: Client IP address (string)
+        - context["headers"]: Dict of HTTP headers
         """
         if "forbidden_word" in prompt_text.lower():
             return {

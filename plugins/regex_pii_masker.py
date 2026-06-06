@@ -8,7 +8,7 @@ class PIMaskerPlugin(BasePlugin):
         self.email_pattern = re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}')
         self.card_pattern = re.compile(r'\b(?:\d[ -]*?){13,16}\b')
 
-    def inspect(self, prompt_text: str) -> dict:
+    def inspect(self, prompt_text: str, context: dict = None) -> dict:
         modified_text = prompt_text
         
         # Mask Emails

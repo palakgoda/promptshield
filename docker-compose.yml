@@ -6,7 +6,8 @@ services:
     ports:
       - "8080:8080"
     env_file:
-      - .env
+      - path: .env
+        required: false
     volumes:
       - ./plugins:/app/plugins
       - ./data:/app/data

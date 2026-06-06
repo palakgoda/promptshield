@@ -9,7 +9,7 @@ class BasePlugin(ABC):
         self.name = name
 
     @abstractmethod
-    def inspect(self, prompt_text: str) -> dict:
+    def inspect(self, prompt_text: str, context: dict = None) -> dict:
         """
         Inspects the incoming prompt text.
         Returns a dictionary: 

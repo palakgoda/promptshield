@@ -77,13 +77,23 @@ Every prompt is intercepted, scanned by your plugin stack, then either blocked o
 
 ## Quick Start
 
-```bash
-git clone https://github.com/YOUR_USERNAME/promptshield.git
-cd promptshield
-docker compose up
-```
+1. Clone the repository and navigate into the folder:
+   ```bash
+   git clone https://github.com/YOUR_USERNAME/promptshield.git
+   cd promptshield
+   ```
 
-> ⚠️ **Active development** — Full setup instructions coming with Day 2 release. Star the repo to follow along!
+2. (Optional) Set up your upstream provider API keys:
+   ```bash
+   cp .env.example .env
+   ```
+   *Edit `.env` and insert your `GEMINI_API_KEY` or `OPENAI_API_KEY`.*
+
+3. Spin up PromptShield locally via Docker:
+   ```bash
+   docker compose up
+   ```
+   *Note: If no `.env` file is present, the proxy will still run successfully in zero-config mode, and you can pass API keys directly in client headers.*
 
 ---
 
@@ -105,15 +115,17 @@ Create a single `.py` file in `/plugins/`:
 
 ```python
 # /plugins/my_guardrail.py
+from plugins.base import BasePlugin
 
-class SecurityPlugin:
+class SecurityPlugin(BasePlugin):
     def __init__(self):
-        self.name = "Prompt Injection Detector"
+        super().__init__(name="Prompt Injection Detector")
 
-    def inspect(self, prompt_text: str) -> dict:
+    def inspect(self, prompt_text: str, context: dict = None) -> dict:
         if "ignore previous instructions" in prompt_text.lower():
             return {
                 "safe": False,
+                "prompt": prompt_text,
                 "reason": "Prompt injection attempt blocked."
             }
         return {"safe": True, "prompt": prompt_text}

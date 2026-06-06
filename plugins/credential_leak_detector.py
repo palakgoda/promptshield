@@ -10,7 +10,7 @@ class CredentialLeakDetectorPlugin(BasePlugin):
         re.compile(r'AIzaSy[a-zA-Z0-9-_]{33}')
     ]
 
-    def inspect(self, prompt_text: str) -> dict:
+    def inspect(self, prompt_text: str, context: dict = None) -> dict:
         for pattern in self.secret_patterns:
             if pattern.search(prompt_text):
                 return {

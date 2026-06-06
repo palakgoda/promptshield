@@ -1,9 +1,10 @@
 import httpx
 import importlib
 import pkgutil
+import inspect
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
+from fastapi.responses import JSONResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from src.config import settings
 from src.database import init_db, log_request, get_recent_logs, get_db_metrics
@@ -109,17 +110,23 @@ async def get_logs_endpoint(limit: int = 50):
     return get_recent_logs(limit)
 
 @app.post("/v1/chat/completions")
-async def proxy_llm_request(request: Request):
+async def proxy_llm_request(request: Request, background_tasks: BackgroundTasks):
     try:
         body = await request.json()
     except Exception:
-        log_request(endpoint="/v1/chat/completions", status_code=400, message="Invalid JSON payload structure.")
+        background_tasks.add_task(log_request, endpoint="/v1/chat/completions", status_code=400, message="Invalid JSON payload structure.")
         raise HTTPException(status_code=400, detail="Invalid JSON payload structure.")
 
     # --- 🛡️ RUN PROMPT THROUGH THE SECURITY PIPELINE 🛡️ ---
     plugin_triggered = None
     mitigation_msg = None
     sanitized = False
+    
+    # Extract request context for intelligent guardrails
+    context = {
+        "client_ip": request.client.host if request.client else "127.0.0.1",
+        "headers": dict(request.headers),
+    }
     
     try:
         messages = body.get("messages", [])
@@ -130,15 +137,21 @@ async def proxy_llm_request(request: Request):
             # Run the prompt text sequentially through every dynamically loaded plugin shield
             current_prompt = original_prompt
             for plugin in security_pipeline:
-                result = plugin.inspect(current_prompt)
+                # Check plugin signature to maintain backward compatibility
+                sig = inspect.signature(plugin.inspect)
+                if "context" in sig.parameters:
+                    result = plugin.inspect(current_prompt, context=context)
+                else:
+                    result = plugin.inspect(current_prompt)
                 
                 # If any plugin flags the prompt as unsafe, block the entire request immediately!
                 if not result["safe"]:
                     plugin_triggered = plugin.name
                     mitigation_msg = result["reason"]
                     
-                    # Log blocked malicious events
-                    log_request(
+                    # Log blocked malicious events asynchronously
+                    background_tasks.add_task(
+                        log_request,
                         endpoint="/v1/chat/completions", 
                         status_code=403, 
                         plugin_triggered=plugin_triggered, 
@@ -165,7 +178,7 @@ async def proxy_llm_request(request: Request):
             # Inject the sanitized prompt back into the request payload
             body["messages"][-1]["content"] = current_prompt
     except Exception as e:
-        log_request(endpoint="/v1/chat/completions", status_code=500, message=f"Internal Firewall Error: {str(e)}")
+        background_tasks.add_task(log_request, endpoint="/v1/chat/completions", status_code=500, message=f"Internal Firewall Error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Internal Firewall Processing Error: {str(e)}")
     # -----------------------------------------------------
 
@@ -178,7 +191,7 @@ async def proxy_llm_request(request: Request):
         target_url = "https://api.openai.com/v1/chat/completions"
         auth_key = settings.OPENAI_API_KEY or (client_auth.replace("Bearer ", "") if client_auth else "")
         if not auth_key:
-            log_request(endpoint="/v1/chat/completions", status_code=400, message="OpenAI API key missing.")
+            background_tasks.add_task(log_request, endpoint="/v1/chat/completions", status_code=400, message="OpenAI API key missing.")
             raise HTTPException(status_code=400, detail="OpenAI API key is required but missing.")
         target_headers = {
             "Authorization": f"Bearer {auth_key}",
@@ -189,7 +202,7 @@ async def proxy_llm_request(request: Request):
         target_url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
         auth_key = settings.GEMINI_API_KEY or (client_auth.replace("Bearer ", "") if client_auth else "")
         if not auth_key:
-            log_request(endpoint="/v1/chat/completions", status_code=400, message="Gemini API key missing.")
+            background_tasks.add_task(log_request, endpoint="/v1/chat/completions", status_code=400, message="Gemini API key missing.")
             raise HTTPException(status_code=400, detail="Gemini API key is required but missing.")
         target_headers = {
             "Authorization": f"Bearer {auth_key}",
@@ -205,7 +218,7 @@ async def proxy_llm_request(request: Request):
             }
         else:
             if not settings.GEMINI_API_KEY:
-                log_request(endpoint="/v1/chat/completions", status_code=500, message="Default API provider key missing.")
+                background_tasks.add_task(log_request, endpoint="/v1/chat/completions", status_code=500, message="Default API provider key missing.")
                 raise HTTPException(status_code=500, detail="Target AI provider API key is missing.")
             target_headers = {
                 "Authorization": f"Bearer {settings.GEMINI_API_KEY}",
@@ -213,30 +226,76 @@ async def proxy_llm_request(request: Request):
             }
     # ---------------------------------------------
 
-    # Forward the sanitized body to the real provider
+    # Forward the sanitized body to the real provider (supporting SSE streaming)
     try:
-        response = await async_client.post(
-            target_url,
-            json=body,
-            headers=target_headers,
-            timeout=30.0
-        )
-        
-        # Log successful pass-through or upstream errors
-        final_plugin = plugin_triggered if plugin_triggered else "Clean Forward Pass"
-        final_msg = mitigation_msg if mitigation_msg else "Forwarded: Safe structural context parameters matched."
-        if response.status_code != 200:
-            final_plugin = "Upstream Route Error"
-            final_msg = f"Upstream provider returned status {response.status_code}"
+        if body.get("stream", False):
+            # Build streaming request
+            req = async_client.build_request(
+                "POST",
+                target_url,
+                json=body,
+                headers=target_headers,
+                timeout=60.0
+            )
+            response = await async_client.send(req, stream=True)
             
-        log_request(
-            endpoint="/v1/chat/completions",
-            status_code=response.status_code,
-            plugin_triggered=final_plugin,
-            message=final_msg
-        )
-        
-        return JSONResponse(status_code=response.status_code, content=response.json())
+            # Log successful pass-through or upstream errors
+            final_plugin = plugin_triggered if plugin_triggered else "Clean Forward Pass (Stream)"
+            final_msg = mitigation_msg if mitigation_msg else "Forwarded: Safe stream request initiated."
+            if response.status_code != 200:
+                final_plugin = "Upstream Route Error"
+                final_msg = f"Upstream provider returned status {response.status_code}"
+                
+            background_tasks.add_task(
+                log_request,
+                endpoint="/v1/chat/completions",
+                status_code=response.status_code,
+                plugin_triggered=final_plugin,
+                message=final_msg
+            )
+            
+            async def stream_generator():
+                try:
+                    async for chunk in response.aiter_bytes():
+                        yield chunk
+                finally:
+                    await response.aclose()
+            
+            # Filter headers that conflict with chunked transfer or event-stream response
+            headers = {k: v for k, v in response.headers.items() if k.lower() not in ("content-length", "transfer-encoding", "content-encoding")}
+            
+            return StreamingResponse(
+                stream_generator(),
+                status_code=response.status_code,
+                headers=headers,
+                media_type="text/event-stream"
+            )
+        else:
+            # Standard non-streaming request
+            response = await async_client.post(
+                target_url,
+                json=body,
+                headers=target_headers,
+                timeout=30.0
+            )
+            
+            # Log successful pass-through or upstream errors
+            final_plugin = plugin_triggered if plugin_triggered else "Clean Forward Pass"
+            final_msg = mitigation_msg if mitigation_msg else "Forwarded: Safe structural context parameters matched."
+            if response.status_code != 200:
+                final_plugin = "Upstream Route Error"
+                final_msg = f"Upstream provider returned status {response.status_code}"
+                
+            background_tasks.add_task(
+                log_request,
+                endpoint="/v1/chat/completions",
+                status_code=response.status_code,
+                plugin_triggered=final_plugin,
+                message=final_msg
+            )
+            
+            return JSONResponse(status_code=response.status_code, content=response.json())
+            
     except httpx.HTTPError as exc:
-        log_request(endpoint="/v1/chat/completions", status_code=502, message=f"Upstream provider error: {str(exc)}")
+        background_tasks.add_task(log_request, endpoint="/v1/chat/completions", status_code=502, message=f"Upstream provider error: {str(exc)}")
         raise HTTPException(status_code=502, detail=f"Upstream provider communication error: {str(exc)}")

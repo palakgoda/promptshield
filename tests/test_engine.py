@@ -28,7 +28,7 @@ def test_rate_limiter_blocks_spikes():
     # Set threshold low to test the break limits quickly
     plugin = RateLimiterPlugin(max_requests=2, window_seconds=10)
     
-    # Request 1 & 2 pass smoothly
+    # Request 1 & 2 pass smoothly (no context fallback to 'global')
     assert plugin.inspect("Prompt 1")["safe"] is True
     assert plugin.inspect("Prompt 2")["safe"] is True
     
@@ -36,6 +36,22 @@ def test_rate_limiter_blocks_spikes():
     result = plugin.inspect("Prompt 3")
     assert result["safe"] is False
     assert "Rate Limit Exceeded" in result["reason"]
+
+def test_rate_limiter_partitions_by_client():
+    # Set threshold to 2 requests per 10 seconds
+    plugin = RateLimiterPlugin(max_requests=2, window_seconds=10)
+    
+    # Client 1 makes two successful requests
+    assert plugin.inspect("P1", context={"client_ip": "192.168.1.1"})["safe"] is True
+    assert plugin.inspect("P2", context={"client_ip": "192.168.1.1"})["safe"] is True
+    # Client 1's third request is blocked
+    assert plugin.inspect("P3", context={"client_ip": "192.168.1.1"})["safe"] is False
+    
+    # Client 2 (different IP) is independent and passes through successfully
+    assert plugin.inspect("P4", context={"client_ip": "10.0.0.1"})["safe"] is True
+    assert plugin.inspect("P5", context={"client_ip": "10.0.0.1"})["safe"] is True
+    # Client 2's third request is blocked
+    assert plugin.inspect("P6", context={"client_ip": "10.0.0.1"})["safe"] is False
 
 def test_dynamic_plugin_loader():
     plugins_list = load_security_plugins()
