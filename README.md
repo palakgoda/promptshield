@@ -137,20 +137,6 @@ Drop it in. It loads automatically. That's the entire contribution.
 
 ---
 
-## Roadmap (Hackathon MVP v1.0)
-
-- [x] **Day 1** — Architecture design & repository initialization
-- [ ] **Day 2** — Core FastAPI routing proxy (`POST /v1/chat/completions`)
-- [ ] **Day 3** — Plugin engine + 3 core plugins + `pytest` test suite
-- [ ] **Day 4** — SQLite analytics logging
-- [ ] **Day 5** — Lightweight React request log dashboard
-- [ ] **Day 6** — `Dockerfile` + `docker-compose.yml`
-- [ ] **Day 7** — Documentation, demo video & submission
-
-> SSE streaming support is scoped for **v0.2** to ensure a bulletproof v1.0 core.
-
----
-
 ## Contributing
 
 Contributions are what make open source thrive. The easiest way to contribute is to **write a plugin** — if you can write a Python `if` statement, you can contribute to PromptShield.
